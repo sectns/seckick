@@ -12,7 +12,7 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
   const effectiveUrl = useMemo(() => {
     if (!playbackUrl) return '';
     if (import.meta.env.VITE_USE_PROXY === '1') {
-      return `/api/proxy?url=${encodeURIComponent(playbackUrl)}`;
+      return `https://durbekle.seckick.workers.dev/?url=${encodeURIComponent(playbackUrl)}`;
     }
     return playbackUrl;
   }, [playbackUrl]);

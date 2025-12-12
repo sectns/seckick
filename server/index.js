@@ -22,7 +22,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 // Simple proxy to bypass CORS for HLS playlists/segments
-app.get('/api/proxy', async (req, res) => {
+/*app.get('/api/proxy', async (req, res) => {
   const target = req.query.url;
   if (!target) {
     return res.status(400).send('Missing url');
@@ -58,7 +58,7 @@ app.get('/api/proxy', async (req, res) => {
     console.error('Proxy error', err.message);
     return res.status(502).send('Proxy failed');
   }
-});
+}); */
 
 // Serve built frontend if it exists
 const distPath = path.join(__dirname, '../client/dist');
