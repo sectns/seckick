@@ -5,3 +5,4 @@ dist
 .env
 client/.env
 npm-debug.log*
+memory-bank
