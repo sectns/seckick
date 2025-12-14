@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import Plyr from 'plyr';
-import Hls from 'hls.js';
-import 'plyr/dist/plyr.css';
+
+// Linkleri burada tanımlıyoruz
+const CLAPPR_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/clappr@latest/dist/clappr.min.js";
+const LEVEL_SELECTOR_URL = "https://cdn.jsdelivr.net/npm/clappr-level-selector-plugin@latest/dist/level-selector.min.js";
 
 export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerCount }) {
-  const videoRef = useRef(null);
-  const plyrRef = useRef(null);
-  const hlsRef = useRef(null);
+  const playerRef = useRef(null);
+  const playerDivRef = useRef(null);
   const [currentQuality, setCurrentQuality] = useState('Otomatik');
+  const [libsLoaded, setLibsLoaded] = useState(false); // Kütüphaneler yüklendi mi?
 
+  // Proxy URL Mantığı
   const effectiveUrl = useMemo(() => {
     if (!playbackUrl) return '';
     if (import.meta.env.VITE_USE_PROXY === '1') {
@@ -17,129 +19,126 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
     return playbackUrl;
   }, [playbackUrl]);
 
+  // --- 1. ADIM: Scriptleri Yükle ---
   useEffect(() => {
-    // URL değiştiğinde bu useEffect çalışır.
-    // Ancak aşağıdaki return (cleanup) fonksiyonu önce çalışarak eski player'ı temizler.
-    
-    const video = videoRef.current;
-    if (!video || !effectiveUrl) return;
-
-    // --- AYARLAR ---
-    const defaultOptions = {
-      controls: [
-        'play-large', 'play', 'mute', 'volume', 'settings', 'fullscreen', 'airplay'
-      ],
-      settings: ['quality', 'speed'],
-      i18n: { quality: 'Kalite', speed: 'Hız', auto: 'Otomatik' },
-      speed: { selected: 1, options: [0.5, 1, 1.5, 2] },
-      autoplay: true,
-      muted: true,
-      clickToPlay: false,
-      displayDuration: true,
-      hideControls: false, // Canlı yayında kontroller kaybolmasın
-      resetOnEnd: true,
-    };
-
-    // --- HLS.JS KURULUMU ---
-    if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: true,
-        backBufferLength: 90,
-      });
-      hlsRef.current = hls;
-
-      hls.loadSource(effectiveUrl);
-      hls.attachMedia(video);
-
-      hls.on(Hls.Events.MANIFEST_PARSED, (event, data) => {
-        // Kalite Sıralaması
-        const availableQualities = hls.levels.map((l) => l.height);
-        const uniqueQualities = [0, ...new Set(availableQualities)].sort((a, b) => {
-           if (a === 0) return -1;
-           if (b === 0) return 1;
-           return b - a; 
-        });
-
-        // Plyr Başlatma
-        // Plyr, video elementini sarmalar (wrapper oluşturur).
-        plyrRef.current = new Plyr(video, {
-          ...defaultOptions,
-          quality: {
-            default: 0,
-            options: uniqueQualities,
-            forced: true,
-            onChange: (newQuality) => {
-              if (newQuality === 0) {
-                hls.currentLevel = -1;
-                setCurrentQuality('Otomatik');
-              } else {
-                const levelIndex = hls.levels.findIndex((l) => l.height === newQuality);
-                hls.currentLevel = levelIndex;
-                setCurrentQuality(`${newQuality}p`);
-              }
-            },
-          },
-        });
-
-        // Oynat
-        const playPromise = video.play();
-        if (playPromise !== undefined) {
-            playPromise.catch(() => {});
-        }
-      });
-
-      hls.on(Hls.Events.ERROR, function (event, data) {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              hls.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              hls.recoverMediaError();
-              break;
-            default:
-              // Fatal hata durumunda destroy etmeye çalışmıyoruz,
-              // çünkü component unmount/remount ile zaten temizlenecek.
-              break;
-          }
-        }
-      });
-    } 
-    // --- SAFARI (Doğal HLS) ---
-    else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = effectiveUrl;
-      const onLoadedMetadata = () => {
-         if (!plyrRef.current) {
-             plyrRef.current = new Plyr(video, defaultOptions);
-         }
-         video.play().catch(() => {});
-      };
-      video.addEventListener('loadedmetadata', onLoadedMetadata);
+    // Eğer zaten window'da varsa tekrar yükleme
+    if (window.Clappr && window.LevelSelector) {
+      setLibsLoaded(true);
+      return;
     }
 
-    // --- CLEANUP (TEMİZLİK) ---
-    return () => {
-      // 1. Önce HLS akışını durdur (Blob hatalarını önler)
-      if (hlsRef.current) {
-        hlsRef.current.stopLoad();
-        hlsRef.current.detachMedia();
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-
-      // 2. Plyr'ı yok et
-      if (plyrRef.current) {
-        plyrRef.current.destroy();
-        plyrRef.current = null;
-      }
-      
-      // 3. Videoyu temizle (Ama DOM'dan silmeye çalışma, React halledecek)
-      // Bu adım önemlidir, video src'si kalırsa bellek şişebilir.
-      // Ancak removeChild hatasını önlemek için burada DOM manipülasyonu yapmıyoruz.
+    const loadScript = (src) => {
+      return new Promise((resolve, reject) => {
+        // Script zaten sayfada var mı kontrol et
+        if (document.querySelector(`script[src="${src}"]`)) {
+          resolve();
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.body.appendChild(script);
+      });
     };
 
-  }, [effectiveUrl]); 
+    // Önce Clappr, sonra Plugin yüklensin (sıra önemli olabilir)
+    loadScript(CLAPPR_SCRIPT_URL)
+      .then(() => loadScript(LEVEL_SELECTOR_URL))
+      .then(() => {
+        setLibsLoaded(true);
+      })
+      .catch((err) => console.error("Player scriptleri yüklenemedi:", err));
+
+  }, []);
+
+  // --- 2. ADIM: Player'ı Başlat ---
+  useEffect(() => {
+    // Kütüphaneler, URL veya Div hazır değilse bekle
+    if (!libsLoaded || !effectiveUrl || !playerDivRef.current || !window.Clappr) return;
+
+    // Önceki player varsa temizle
+    if (playerRef.current) {
+        playerRef.current.destroy();
+        playerRef.current = null;
+    }
+
+    // Clappr Kurulumu
+    playerRef.current = new window.Clappr.Player({
+      source: effectiveUrl,
+      parentId: playerDivRef.current,
+      plugins: [window.LevelSelector], 
+      width: '100%',
+      height: '100%',
+      autoPlay: true,
+      mute: true,
+      
+      playback: {
+        hlsjsConfig: {
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90,
+        },
+      },
+
+      hlsMinimumDvrSize: 60,
+      mediacontrol: {seekbar: '#53fc18', buttons: '#53fc18'},
+
+      levelSelectorConfig: {
+        title: 'Kalite',
+        labelCallback: function(playbackLevel, customLabel) {
+            if (!playbackLevel.level.height) return 'Otomatik';
+            return playbackLevel.level.height + 'p'; 
+        }
+      },
+    });
+
+    const player = playerRef.current;
+
+    // --- EVENTLER ---
+    
+    // Kalite Değişimi
+    player.on(window.Clappr.Events.PLAYBACK_LEVEL_SWITCH_END, () => {
+        const currentLevel = player.core.getCurrentPlayback().currentLevel;
+        if (currentLevel === -1 || currentLevel === undefined) {
+            setCurrentQuality('Otomatik');
+        } else {
+            const levels = player.core.getCurrentPlayback().levels;
+            if(levels && levels[currentLevel]) {
+                setCurrentQuality(`${levels[currentLevel].height}p`);
+            }
+        }
+    });
+
+    // Mobil Landscape
+    player.on(window.Clappr.Events.PLAYER_FULLSCREEN, (isFullscreen) => {
+        if (isFullscreen) {
+            try {
+                if (screen.orientation && screen.orientation.lock) {
+                    screen.orientation.lock('landscape').catch(() => {});
+                }
+            } catch(e) {}
+        } else {
+            try {
+                if (screen.orientation && screen.orientation.unlock) {
+                    screen.orientation.unlock();
+                }
+            } catch(e) {}
+        }
+    });
+
+    // Cleanup
+    return () => {
+      if (playerRef.current) {
+        playerRef.current.destroy();
+        playerRef.current = null;
+      }
+      if (playerDivRef.current) {
+        playerDivRef.current.innerHTML = '';
+      }
+    };
+  }, [effectiveUrl, libsLoaded]); // libsLoaded bağımlılığı eklendi
 
   if (!playbackUrl) {
     return (
@@ -151,7 +150,6 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
 
   return (
     <div className="glass-card flex flex-col gap-4 p-4">
-      {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
           <h3 className="font-display text-lg font-semibold">{title || channel}</h3>
@@ -167,40 +165,41 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
         </div>
       </div>
 
-      {/* KRİTİK DÜZELTME BURADA:
-         key={effectiveUrl} özelliğini <video> etiketinden alıp 
-         onu sarmalayan <div> etiketine taşıdık.
-         
-         Bu sayede React, video elementini tek tek silmeye çalışmaz (bunu yaparken Plyr ile çakışıyordu).
-         Bunun yerine tüm "wrapper-div"i çöpe atar ve yenisini oluşturur.
-         Bu işlem güvenlidir ve "NotFoundError" hatasını %100 çözer.
-      */}
       <div 
-        key={effectiveUrl} 
-        className="wrapper-div overflow-hidden rounded-xl border border-white/5 bg-black plyr--video shadow-2xl"
+        key={effectiveUrl}
+        className="wrapper-div relative aspect-video overflow-hidden rounded-xl border border-white/5 bg-black shadow-2xl"
       >
-        <video
-          ref={videoRef}
-          className="h-full w-full"
-          playsInline
-          muted
-          crossOrigin="anonymous"
-        />
+        {/* Yükleniyor durumunda gösterilecek basit bir loader (opsiyonel) */}
+        {!libsLoaded && (
+             <div className="absolute inset-0 flex items-center justify-center text-white/50">
+                Player yükleniyor...
+             </div>
+        )}
+        <div ref={playerDivRef} className="h-full w-full" />
       </div>
 
-      {/* CSS */}
       <style>{`
-        .plyr--video .plyr__control--overlaid {
-            background: rgba(83, 252, 24, 0.8);
+        .media-control-layer .bar-fill-2 {
+            background-color: #53fc18 !important;
         }
-        .plyr--video .plyr__control.plyr__tab-focus,
-        .plyr--video .plyr__control:hover,
-        .plyr--video .plyr__control[aria-expanded=true] {
-            background: #53fc18;
-            color: #000;
+        .media-control-layer .bar-scrubber-icon {
+            border-color: #53fc18 !important;
         }
-        .plyr__menu__container .plyr__control[role=menuitemradio][aria-checked=true]::before {
-            background: #53fc18;
+        .level_selector ul {
+            background-color: rgba(0, 0, 0, 0.9) !important;
+            color: white !important;
+            z-index: 9999;
+        }
+        .level_selector li {
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .level_selector li:hover, .level_selector li.current {
+            color: #53fc18 !important;
+            background-color: rgba(255,255,255,0.1);
+        }
+        .media-control-layer button:hover {
+            color: #53fc18 !important;
+            fill: #53fc18 !important;
         }
       `}</style>
     </div>
