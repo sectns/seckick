@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 // Linkleri sabit tutuyoruz
-const CLAPPR_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/clappr@latest/dist/clappr.min.js";
-const LEVEL_SELECTOR_URL = "https://cdn.jsdelivr.net/npm/clappr-level-selector-plugin@latest/dist/level-selector.min.js";
+const CLAPPR_SCRIPT_URL = "https://cdn.jsdelivr.net/gh/clappr/clappr@latest/dist/clappr.min.js";
+const LEVEL_SELECTOR_URL = "https://cdn.jsdelivr.net/npm/level-selector/dist/level-selector.min.js";
 
 export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerCount }) {
   const playerRef = useRef(null);
