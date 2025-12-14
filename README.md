@@ -43,5 +43,5 @@ Projeyi yerel makinenizde çalıştırmak için aşağıdaki adımları izleyin:
 
 ### 1. Projeyi Klonlayın
 ```bash
-git clone [https://github.com/sectns/seckick.git](https://github.com/sectns/seckick.git)
+git clone https://github.com/sectns/seckick.git
 cd seckick
