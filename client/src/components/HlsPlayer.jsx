@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-// Linkleri burada tanımlıyoruz
 const CLAPPR_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/clappr@latest/dist/clappr.min.js";
 const LEVEL_SELECTOR_URL = "https://cdn.jsdelivr.net/npm/clappr-level-selector-plugin@latest/dist/level-selector.min.js";
 
@@ -8,9 +7,8 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
   const playerRef = useRef(null);
   const playerDivRef = useRef(null);
   const [currentQuality, setCurrentQuality] = useState('Otomatik');
-  const [libsLoaded, setLibsLoaded] = useState(false); // Kütüphaneler yüklendi mi?
+  const [libsLoaded, setLibsLoaded] = useState(false);
 
-  // Proxy URL Mantığı
   const effectiveUrl = useMemo(() => {
     if (!playbackUrl) return '';
     if (import.meta.env.VITE_USE_PROXY === '1') {
@@ -19,9 +17,8 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
     return playbackUrl;
   }, [playbackUrl]);
 
-  // --- 1. ADIM: Scriptleri Yükle ---
+  // --- 1. Scriptleri Yükle ---
   useEffect(() => {
-    // Eğer zaten window'da varsa tekrar yükleme
     if (window.Clappr && window.LevelSelector) {
       setLibsLoaded(true);
       return;
@@ -29,7 +26,6 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
 
     const loadScript = (src) => {
       return new Promise((resolve, reject) => {
-        // Script zaten sayfada var mı kontrol et
         if (document.querySelector(`script[src="${src}"]`)) {
           resolve();
           return;
@@ -43,37 +39,33 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
       });
     };
 
-    // Önce Clappr, sonra Plugin yüklensin (sıra önemli olabilir)
     loadScript(CLAPPR_SCRIPT_URL)
       .then(() => loadScript(LEVEL_SELECTOR_URL))
-      .then(() => {
-        setLibsLoaded(true);
-      })
-      .catch((err) => console.error("Player scriptleri yüklenemedi:", err));
-
+      .then(() => setLibsLoaded(true))
+      .catch((err) => console.error("Script yükleme hatası:", err));
   }, []);
 
-  // --- 2. ADIM: Player'ı Başlat ---
+  // --- 2. Player Başlat ---
   useEffect(() => {
-    // Kütüphaneler, URL veya Div hazır değilse bekle
     if (!libsLoaded || !effectiveUrl || !playerDivRef.current || !window.Clappr) return;
 
-    // Önceki player varsa temizle
     if (playerRef.current) {
         playerRef.current.destroy();
         playerRef.current = null;
     }
 
-    // Clappr Kurulumu
-    playerRef.current = new window.Clappr.Player({
+    // Div içini temizle
+    playerDivRef.current.innerHTML = '';
+
+    // Clappr Instance
+    const playerInstance = new window.Clappr.Player({
       source: effectiveUrl,
-      parentId: playerDivRef.current,
+      // parentId SİLİNDİ: React ref ile çakışıyor. Aşağıda attachTo kullanacağız.
       plugins: [window.LevelSelector], 
       width: '100%',
       height: '100%',
       autoPlay: true,
       mute: true,
-      
       playback: {
         hlsjsConfig: {
           enableWorker: true,
@@ -81,38 +73,35 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
           backBufferLength: 90,
         },
       },
-
       hlsMinimumDvrSize: 60,
       mediacontrol: {seekbar: '#53fc18', buttons: '#53fc18'},
-
       levelSelectorConfig: {
         title: 'Kalite',
-        labelCallback: function(playbackLevel, customLabel) {
+        labelCallback: function(playbackLevel) {
             if (!playbackLevel.level.height) return 'Otomatik';
             return playbackLevel.level.height + 'p'; 
         }
       },
     });
 
-    const player = playerRef.current;
+    // KRİTİK DÜZELTME: Player'ı oluşturduktan sonra DOM elementine bağlıyoruz
+    playerInstance.attachTo(playerDivRef.current);
+    playerRef.current = playerInstance;
 
-    // --- EVENTLER ---
-    
-    // Kalite Değişimi
-    player.on(window.Clappr.Events.PLAYBACK_LEVEL_SWITCH_END, () => {
-        const currentLevel = player.core.getCurrentPlayback().currentLevel;
+    // --- Event Listenerlar ---
+    playerInstance.on(window.Clappr.Events.PLAYBACK_LEVEL_SWITCH_END, () => {
+        const currentLevel = playerInstance.core.getCurrentPlayback().currentLevel;
         if (currentLevel === -1 || currentLevel === undefined) {
             setCurrentQuality('Otomatik');
         } else {
-            const levels = player.core.getCurrentPlayback().levels;
+            const levels = playerInstance.core.getCurrentPlayback().levels;
             if(levels && levels[currentLevel]) {
                 setCurrentQuality(`${levels[currentLevel].height}p`);
             }
         }
     });
 
-    // Mobil Landscape
-    player.on(window.Clappr.Events.PLAYER_FULLSCREEN, (isFullscreen) => {
+    playerInstance.on(window.Clappr.Events.PLAYER_FULLSCREEN, (isFullscreen) => {
         if (isFullscreen) {
             try {
                 if (screen.orientation && screen.orientation.lock) {
@@ -128,7 +117,6 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
         }
     });
 
-    // Cleanup
     return () => {
       if (playerRef.current) {
         playerRef.current.destroy();
@@ -138,7 +126,7 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
         playerDivRef.current.innerHTML = '';
       }
     };
-  }, [effectiveUrl, libsLoaded]); // libsLoaded bağımlılığı eklendi
+  }, [effectiveUrl, libsLoaded]);
 
   if (!playbackUrl) {
     return (
@@ -169,7 +157,6 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
         key={effectiveUrl}
         className="wrapper-div relative aspect-video overflow-hidden rounded-xl border border-white/5 bg-black shadow-2xl"
       >
-        {/* Yükleniyor durumunda gösterilecek basit bir loader (opsiyonel) */}
         {!libsLoaded && (
              <div className="absolute inset-0 flex items-center justify-center text-white/50">
                 Player yükleniyor...
