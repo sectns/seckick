@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react'; // useRef eklendi
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import HlsPlayer from '../components/HlsPlayer';
 import { useAuth } from '../context/AuthContext';
@@ -16,33 +16,34 @@ export default function Player() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Race condition önlemek için son istenen kanalı takip eder
   const lastRequestedSlug = useRef(null);
 
-  // Sıralama mantığı (Değişmedi)
+  // --- DEĞİŞİKLİK BURADA ---
+  // Sadece CANLI olanları filtrele ve sırala
   const orderedFollows = useMemo(() => {
-    const orderMap = new Map(follows.map((slug, index) => [slug, index]));
-    return [...follows].sort((a, b) => {
-      const statusA = statuses[a] || {};
-      const statusB = statuses[b] || {};
-      const liveA = statusA.isLive ? 1 : 0;
-      const liveB = statusB.isLive ? 1 : 0;
-      if (liveA !== liveB) return liveB - liveA;
+    // 1. Adım: Sadece canlı olanları al
+    const liveOnly = follows.filter(slug => statuses[slug]?.isLive);
 
-      const viewersA = Number.isFinite(statusA.viewerCount) ? statusA.viewerCount : -1;
-      const viewersB = Number.isFinite(statusB.viewerCount) ? statusB.viewerCount : -1;
-      if (viewersA !== viewersB) return viewersB - viewersA;
-
-      return (orderMap.get(a) ?? 0) - (orderMap.get(b) ?? 0);
+    // 2. Adım: İzleyici sayısına göre çoktan aza sırala
+    return liveOnly.sort((a, b) => {
+      const viewersA = statuses[a]?.viewerCount || 0;
+      const viewersB = statuses[b]?.viewerCount || 0;
+      return viewersB - viewersA;
     });
   }, [follows, statuses]);
 
+  // Sidebar listesi için logic
   const displayFollows = useMemo(() => {
+    // Eğer şu an izlenen kanal listede yoksa (örneğin URL'den manuel girildiyse ama canlıysa) listeye ekle
     if (current && !orderedFollows.includes(current)) {
-      return [current, ...orderedFollows];
+      // Ancak buraya da bir kontrol koyuyoruz, eğer current offline ise listeye zorla ekleme
+      const isCurrentLive = statuses[current]?.isLive;
+      if (isCurrentLive) {
+          return [current, ...orderedFollows];
+      }
     }
     return orderedFollows;
-  }, [current, orderedFollows]);
+  }, [current, orderedFollows, statuses]);
 
   // Auth Yönlendirmesi
   useEffect(() => {
@@ -51,8 +52,9 @@ export default function Player() {
     }
   }, [authLoading, user, guest, navigate]);
 
-  // Route yönetimi
+  // Route ve Otomatik Seçim Yönetimi
   useEffect(() => {
+    // 1. URL'de slug varsa onu kullan
     if (routeSlug) {
       if (current !== routeSlug) {
         setCurrent(routeSlug);
@@ -60,6 +62,7 @@ export default function Player() {
       return;
     }
 
+    // 2. URL boşsa ve canlı yayın varsa ilk sıradakine git
     if (orderedFollows.length) {
       const next = orderedFollows[0];
       if (current !== next) setCurrent(next);
@@ -67,28 +70,22 @@ export default function Player() {
       return;
     }
 
+    // 3. Hiçbir şey yoksa state'i temizle
     if (current) setCurrent('');
-    // setPlayback(null); // Burayı kaldırdık, anlık boş ekranı önlemek için
     setError(null);
     if (routeSlug) navigate('/player', { replace: true });
   }, [routeSlug, orderedFollows, navigate, current]);
 
-  // --- KRİTİK DÜZELTME: Veri Çekme ---
+  // Veri Çekme (Playback)
   useEffect(() => {
     if (!current) return;
 
-    // 1. Loading durumuna geç ama playback'i hemen silme (Ekranda eski yayın donuk kalabilir veya loading döner)
-    // Eğer hemen siyah ekran olsun istersen setPlayback(null) açabilirsin ama genelde istenmez.
     setLoading(true);
     setError(null);
-    
-    // Referansı güncelle
     lastRequestedSlug.current = current;
 
     getPlayback(current)
       .then((data) => {
-        // Eğer istek tamamlandığında kullanıcı hala aynı kanaldaysa state'i güncelle
-        // Aksi takdirde kullanıcı başka kanala geçtiyse eski veriyi basma.
         if (lastRequestedSlug.current === current) {
           setPlayback(data);
         }
@@ -96,7 +93,7 @@ export default function Player() {
       .catch((err) => {
         if (lastRequestedSlug.current === current) {
           setError(err.message);
-          setPlayback(null); // Sadece hata varsa player'ı temizle
+          setPlayback(null);
         }
       })
       .finally(() => {
@@ -112,9 +109,6 @@ export default function Player() {
   };
 
   const currentStatus = statuses[current];
-
-  // Playback verisi yoksa ama status verisi varsa (sidebar'dan gelen), onu kullan
-  // Bu, API dönene kadar başlığın doğru görünmesini sağlar.
   const activeTitle = playback?.title || currentStatus?.title || current;
   const activeViewerCount = Number.isFinite(playback?.viewerCount) 
     ? playback.viewerCount 
@@ -122,12 +116,12 @@ export default function Player() {
 
   return (
     <div className="grid gap-6 lg:grid-cols-[360px,1fr]">
-      {/* Sidebar (Sol Menü) */}
+      {/* Sidebar */}
       <div className="glass-card flex flex-col gap-4 p-4 h-fit max-h-[calc(100vh-2rem)] overflow-y-auto">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-brand-300">Takip edilenler</p>
-            <h3 className="font-display text-xl font-semibold">Yayıncı seç</h3>
+            <p className="text-xs uppercase tracking-[0.2em] text-brand-300">Canlı Yayınlar</p>
+            <h3 className="font-display text-xl font-semibold">Yayıncı Seç</h3>
           </div>
           <button
             className="rounded-lg border border-white/10 px-3 py-2 text-xs text-white/70 transition hover:border-white/30"
@@ -140,12 +134,9 @@ export default function Player() {
         <div className="flex flex-col gap-2">
           {displayFollows.map((slug) => {
             const status = statuses[slug] || {};
-            const live = status.isLive;
+            // Burada artık "if (!live) return null" kontrolüne gerek yok
+            // Çünkü displayFollows zaten filtrelenmiş listeden geliyor.
             const viewers = Number.isFinite(status.viewerCount) ? status.viewerCount : null;
-            
-            // Sadece canlı olanları gösterme filtresini kaldırdım veya isteğe bağlı yapabilirsiniz.
-            // Kodunuzda 'return live ? ...' vardı, eğer kapalı yayıncıları görmek isterseniz bunu düzenleyin.
-            if (!live) return null; 
 
             return (
               <button 
@@ -161,36 +152,27 @@ export default function Player() {
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <span
-                    className={`h-2.5 w-2.5 rounded-full ${
-                      live ? 'bg-emerald-400 shadow-[0_0_0_6px_rgba(16,185,129,0.25)]' : 'bg-white/30'
-                    }`}
-                  />
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_0_6px_rgba(16,185,129,0.25)]" />
                   <div>
                     <p className="text-sm font-semibold text-white">{status.name || slug}</p>
                     <p className="text-xs text-white/60">@{slug}</p>
                   </div>
                 </div>
-                <span
-                  className={`pill text-[10px] ${
-                    live
-                      ? 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30'
-                      : 'bg-white/10 text-white/60'
-                  }`}
-                >
+                <span className="pill text-[10px] bg-emerald-500/20 text-emerald-200 border-emerald-500/30">
                   {viewers !== null ? `${viewers.toLocaleString('tr-TR')}` : 'Canlı'} izleyici
                 </span>
               </button>
             );
           })}
+          
           {!displayFollows.length && (
-            <div className="text-sm text-white/70">
-              Henüz takip listesi boş.{' '}
+            <div className="mt-4 flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-white/10 p-6 text-center text-sm text-white/50">
+              <p>Şu an takip ettiğin kimse yayında değil.</p>
               <button
-                className="text-brand-300 underline underline-offset-2"
+                className="text-brand-300 underline underline-offset-2 hover:text-brand-200"
                 onClick={() => navigate('/follows')}
               >
-                Takip ekle
+                Takip listesini düzenle
               </button>
             </div>
           )}
@@ -201,9 +183,6 @@ export default function Player() {
       <div className="flex flex-col gap-4">
         {error && <div className="glass-card p-4 text-sm text-red-300 bg-red-900/10 border border-red-500/20">Hata: {error}</div>}
         
-        {/* HlsPlayer Componenti */}
-        {/* ÖNEMLİ: key prop'unu kaldırdık veya current yerine sabit tuttuk. 
-            Böylece component unmount olmaz, sadece props değişir. */}
         <HlsPlayer
           playbackUrl={playback?.playbackUrl}
           title={activeTitle}
