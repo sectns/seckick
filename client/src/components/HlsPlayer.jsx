@@ -84,6 +84,7 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
       source: effectiveUrl,
       // parentId kullanmıyoruz, attachTo yapacağız
       plugins: plugins, 
+      mimeType: 'application/x-mpegURL',
       width: '100%',
       height: '100%',
       autoPlay: true,
