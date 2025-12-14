@@ -78,7 +78,7 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
       height: '100%',
       autoPlay: true, // Otomatik oynatmayı açar
       mute: false,     // Otomatik oynatmanın çalışması için ses kapalı başlamalıdır
-      preload: auto,
+      preload: 'auto',
       // KRİTİK: Kalite ayarının veriyi okuyabilmesi için bu gerekli
       playback: {
         playInline: true,
