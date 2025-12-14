@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+// Linkleri sabit tutuyoruz
 const CLAPPR_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/clappr@latest/dist/clappr.min.js";
 const LEVEL_SELECTOR_URL = "https://cdn.jsdelivr.net/npm/clappr-level-selector-plugin@latest/dist/level-selector.min.js";
 
@@ -19,7 +20,6 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
 
   // --- 1. Scriptleri Yükle ---
   useEffect(() => {
-    // Zaten yüklüyse state'i güncelle ve çık
     if (window.Clappr && window.LevelSelector) {
       setLibsLoaded(true);
       return;
@@ -27,9 +27,7 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
 
     const loadScript = (src) => {
       return new Promise((resolve, reject) => {
-        // Script DOM'da var mı kontrol et
         if (document.querySelector(`script[src="${src}"]`)) {
-          // Var ama window objesi henüz oluşmadıysa bekle (Hızlı refresh durumları için)
           resolve(); 
           return;
         }
@@ -42,101 +40,100 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
       });
     };
 
-    // Sıralı yükleme: Önce Clappr, Sonra Plugin
     loadScript(CLAPPR_SCRIPT_URL)
       .then(() => loadScript(LEVEL_SELECTOR_URL))
       .then(() => {
-        // Script onload tetiklense bile window objesine oturması için minik bir gecikme tanıyalım
+        // Script yüklense bile window objesine oturması için minik bir bekleme
         setTimeout(() => {
-            if (window.Clappr) {
-                setLibsLoaded(true);
-            }
-        }, 100);
+            if (window.Clappr) setLibsLoaded(true);
+        }, 200);
       })
       .catch((err) => console.error("Player scriptleri yüklenemedi:", err));
   }, []);
 
   // --- 2. Player Başlat ---
   useEffect(() => {
-    // Temel gereksinimler yoksa başlatma
     if (!libsLoaded || !effectiveUrl || !playerDivRef.current || !window.Clappr) return;
 
-    // Önceki player'ı temizle
+    // Temizlik
     if (playerRef.current) {
         playerRef.current.destroy();
         playerRef.current = null;
     }
-    
-    // Div içini temizle
     playerDivRef.current.innerHTML = '';
 
-    // --- GÜVENLİ PLUGIN YÜKLEME ---
-    // Hatanın çözümü burası: Plugin undefined ise diziye eklemiyoruz.
+    // Eklenti Kontrolü
     const plugins = [];
+    // Clappr'ın kendi HLS oynatıcısı zaten var ama level selector için plugin listesine ekliyoruz
     if (window.LevelSelector) {
         plugins.push(window.LevelSelector);
-    } else {
-        console.warn("LevelSelector plugin yüklendi görünmüyor, kalite ayarı devre dışı.");
     }
 
-    // Clappr Konfigürasyonu
+    // --- Clappr Konfigürasyonu ---
     const playerInstance = new window.Clappr.Player({
       source: effectiveUrl,
-      // parentId kullanmıyoruz, attachTo yapacağız
-      plugins: plugins, 
       mimeType: 'application/x-mpegURL',
+      plugins: plugins, 
       width: '100%',
       height: '100%',
-      autoPlay: true,
-      mute: true,
+      autoPlay: true, // Otomatik oynatmayı açar
+      mute: true,     // Otomatik oynatmanın çalışması için ses kapalı başlamalıdır
+      
+      // KRİTİK: Kalite ayarının veriyi okuyabilmesi için bu gerekli
       playback: {
+        playInline: true,
+        crossOrigin: 'anonymous', 
         hlsjsConfig: {
-          enableWorker: true,
-          lowLatencyMode: true,
-          backBufferLength: 90,
-        },
+            enableWorker: true,
+            lowLatencyMode: true,
+        }
       },
-      hlsMinimumDvrSize: 60,
+
+      // Arayüz Ayarları
       mediacontrol: {seekbar: '#53fc18', buttons: '#53fc18'},
       
-      // Plugin varsa ayarları da ekle
-      ...(window.LevelSelector ? {
-          levelSelectorConfig: {
-            title: 'Kalite',
-            labelCallback: function(playbackLevel) {
-                if (!playbackLevel.level.height) return 'Otomatik';
-                return playbackLevel.level.height + 'p'; 
+      // Kalite Eklentisi Ayarları
+      levelSelectorConfig: {
+        title: 'Kalite',
+        labelCallback: function(playbackLevel, customLabel) {
+            // Hata koruması: playbackLevel bazen boş gelebilir
+            if (!playbackLevel || !playbackLevel.level) return 'Otomatik';
+            // 0 level genellikle 'Auto'dur ama HLS.js versiyonuna göre değişebilir
+            if (playbackLevel.level.height) {
+                 return playbackLevel.level.height + 'p'; 
             }
-          }
-      } : {}),
+            return 'Otomatik';
+        }
+      },
     });
 
-    // Player'ı DOM'a bağla
+    // Player'ı div'e bağla
     playerInstance.attachTo(playerDivRef.current);
     playerRef.current = playerInstance;
 
     // --- Event Listenerlar ---
-    
-    // Kalite Değişimi (Sadece plugin yüklendiyse çalışır)
-    if (window.LevelSelector) {
-        playerInstance.on(window.Clappr.Events.PLAYBACK_LEVEL_SWITCH_END, () => {
-            const playback = playerInstance.core.getCurrentPlayback();
-            // Playback hazır mı kontrolü
-            if (!playback) return;
 
-            const currentLevel = playback.currentLevel;
-            if (currentLevel === -1 || currentLevel === undefined) {
-                setCurrentQuality('Otomatik');
-            } else {
-                const levels = playback.levels;
-                if(levels && levels[currentLevel]) {
-                    setCurrentQuality(`${levels[currentLevel].height}p`);
-                }
-            }
-        });
-    }
+    // 1. Hazır olduğunda oynatmayı zorla (Ok işaretinde takılmaması için)
+    playerInstance.once(window.Clappr.Events.PLAYER_READY, () => {
+        playerInstance.play();
+    });
 
-    // Mobil Landscape Zorlama
+    // 2. Kalite Değişimi Takibi
+    playerInstance.on(window.Clappr.Events.PLAYBACK_LEVEL_SWITCH_END, () => {
+        const playback = playerInstance.core.getCurrentPlayback();
+        if (!playback) return;
+        
+        const currentLevel = playback.currentLevel;
+        const levels = playback.levels;
+
+        if (currentLevel === -1 || currentLevel === undefined || !levels || !levels[currentLevel]) {
+            setCurrentQuality('Otomatik');
+        } else {
+            setCurrentQuality(`${levels[currentLevel].height}p`);
+        }
+    });
+
+    // 3. Mobil Landscape
     playerInstance.on(window.Clappr.Events.PLAYER_FULLSCREEN, (isFullscreen) => {
         if (isFullscreen) {
             try {
@@ -175,6 +172,7 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
 
   return (
     <div className="glass-card flex flex-col gap-4 p-4">
+      {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div>
           <h3 className="font-display text-lg font-semibold">{title || channel}</h3>
@@ -190,6 +188,7 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
         </div>
       </div>
 
+      {/* Player Container */}
       <div 
         key={effectiveUrl}
         className="wrapper-div relative aspect-video overflow-hidden rounded-xl border border-white/5 bg-black shadow-2xl"
@@ -202,25 +201,63 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
         <div ref={playerDivRef} className="h-full w-full" />
       </div>
 
+      {/* CSS DÜZELTMELERİ */}
       <style>{`
+        /* 1. O kocaman yeşil oku ortala ve düzelt */
+        .player-poster .play-wrapper {
+            position: absolute !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            height: 80px !important;
+            width: 80px !important;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.5); /* Hafif arka plan */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+        
+        /* Ok ikonu */
+        .player-poster .play-wrapper svg {
+            height: 40px !important;
+            width: 40px !important;
+            margin-left: 5px; /* Optik dengeleme */
+            fill: #53fc18 !important; /* Senin yeşil rengin */
+        }
+        
+        .player-poster .play-wrapper:hover {
+            background: rgba(0,0,0,0.8);
+            transform: translate(-50%, -50%) scale(1.1) !important;
+        }
+
+        /* 2. Kontrol Çubuğu Renkleri */
         .media-control-layer .bar-fill-2 {
             background-color: #53fc18 !important;
         }
         .media-control-layer .bar-scrubber-icon {
             border-color: #53fc18 !important;
         }
+        
+        /* 3. Kalite Menüsü Görünürlüğü */
         .level_selector ul {
-            background-color: rgba(0, 0, 0, 0.9) !important;
+            background-color: rgba(0, 0, 0, 0.95) !important;
             color: white !important;
             z-index: 9999;
+            border: 1px solid rgba(255,255,255,0.1);
         }
         .level_selector li {
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            font-size: 13px;
+            padding: 8px 12px;
         }
         .level_selector li:hover, .level_selector li.current {
             color: #53fc18 !important;
-            background-color: rgba(255,255,255,0.1);
+            background-color: rgba(83, 252, 24, 0.1);
         }
+        
+        /* Buton Hover Efektleri */
         .media-control-layer button:hover {
             color: #53fc18 !important;
             fill: #53fc18 !important;
