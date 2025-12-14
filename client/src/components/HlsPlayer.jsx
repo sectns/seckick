@@ -239,29 +239,6 @@ export default function HlsPlayer({ playbackUrl, title, channel, isLive, viewerC
         .media-control-layer .bar-scrubber-icon {
             border-color: #53fc18 !important;
         }
-        
-        /* 3. Kalite Menüsü Görünürlüğü */
-        .level_selector ul {
-            background-color: rgba(0, 0, 0, 0.95) !important;
-            color: white !important;
-            z-index: 9999;
-            border: 1px solid rgba(255,255,255,0.1);
-        }
-        .level_selector li {
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-            font-size: 13px;
-            padding: 8px 12px;
-        }
-        .level_selector li:hover, .level_selector li.current {
-            color: #53fc18 !important;
-            background-color: rgba(83, 252, 24, 0.1);
-        }
-        
-        /* Buton Hover Efektleri */
-        .media-control-layer button:hover {
-            color: #53fc18 !important;
-            fill: #53fc18 !important;
-        }
       `}</style>
     </div>
   );
